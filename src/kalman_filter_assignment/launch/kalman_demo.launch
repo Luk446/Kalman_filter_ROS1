@@ -1,0 +1,6 @@
+<launch>
+
+  <!-- Kalman filter template run -->
+  <node pkg="kalman_filter_assignment" type="kalman_filter_template.py" name="kalman_filter" output="screen" />
+</launch>
+

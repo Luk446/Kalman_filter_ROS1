@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<launch>
+
+  <include file="$(find rosbot_bringup)/launch/rosbot_empty_rviz.launch"></include>
+	
+
+  <!-- Path planner node -->
+  <node name="fake_gps" pkg="rosbot_bringup" type="fake_odom.py" output="screen">
+    <param name="robot_name" value="rosbot" />
+    <param name="gps_rate" value="1.0" />
+    <param name="gps_position_noise_std" value="0.1" />
+  </node>
+  
+</launch>

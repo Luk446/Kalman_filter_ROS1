@@ -1,0 +1,16 @@
+<launch>
+
+    <!-- Launch Kalman Filter Node -->
+    <node pkg="kalman_filter_assignment" type="kalman_filter_template.py" name="kalman_filter" output="screen">
+        <param name="student_name" value="$(arg student_name)" />
+    </node>
+
+    <!-- Launch Student Trajectory Node -->
+    <node pkg="kalman_filter_assignment" type="student_trajectory.py" name="student_trajectory" output="screen">
+        <param name="student_name" value="$(arg student_name)" />
+    </node>
+
+    <!-- Argument for student name -->
+    <arg name="student_name" default="student" />
+</launch>
+
