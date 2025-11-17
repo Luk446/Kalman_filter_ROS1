@@ -14,22 +14,21 @@ class SimpleKalmanFilterNode:
 
         # Subscribers
         rospy.Subscriber('/cmd_vel', Twist, self.cmd_vel_callback)
-        rospy.Subscriber('/fake_gps', Odometry, self.gps_callback)      # Accurate, low rate position (x,y)
-        rospy.Subscriber('/odom1', Odometry, self.odom1_callback)       # Noisy, high rate (x,y,yaw)
+        rospy.Subscriber('/fake_gps', Odometry, self.gps_callback)      
+        rospy.Subscriber('/odom1', Odometry, self.odom1_callback)       
 
         # Publisher 
         self.pub = rospy.Publisher('/kalman_estimate', Odometry, queue_size=10)
 
         # Initial State: [x, y, yaw]
         self.x = np.zeros((3,1))
-        self.P = np.eye(3) * 0.5  # start with moderate uncertainty
+        self.P = np.eye(3) * 0.5  # more uncertain
 
-        # Noise Covariances (tunable)
-        # Process noise: uncertainty in executing commanded velocities and yaw rate
+        # Noise 
+        # Process noise, vels and yaw
         self.Q = np.diag([0.05**2, 0.05**2, (2.0*np.pi/180.0)**2])  # ~5cm std, ~2deg std
-        # GPS measurement noise (x,y only) - /fake_gps doesn't publish covariance, using empirical estimate
+        # gps noise
         self.R_gps = np.diag([0.02**2, 0.02**2])  # 2cm std
-        # Noisy odom measurement noise (x,y,yaw) - from /odom1 pose.covariance: [0.0001, 0.0001, 0.01]
         # Noisy odom measurement noise (x,y,yaw)
         self.R_odom1 = np.diag([0.20**2, 0.20**2, (5.0*np.pi/180.0)**2])  # 20cm std, 5deg std
 
@@ -39,8 +38,8 @@ class SimpleKalmanFilterNode:
         self.yaw_rate = 0.0
 
         # Latest measurements
-        self.gps = None            # shape (2,1)
-        self.odom1 = None          # shape (3,1)
+        self.gps = None            
+        self.odom1 = None          
 
         # Timer for Kalman update
         rospy.Timer(rospy.Duration.from_sec(self.dt), self.update_kalman)
@@ -59,7 +58,7 @@ class SimpleKalmanFilterNode:
                               [msg.pose.pose.position.y]])
 
     def odom1_callback(self, msg):
-        """Store the latest noisy odometry measurement (x,y,yaw)."""
+        """Store the latest noisy odom measure (x,y,yaw)."""
         pos_x = msg.pose.pose.position.x
         pos_y = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
@@ -71,15 +70,9 @@ class SimpleKalmanFilterNode:
         return np.arctan2(np.sin(angle), np.cos(angle))
 
     def update_kalman(self, event):
-        """Kalman filter cycle: predict then (optionally) correct with available sensors.
 
-        Assumptions:
-        - Commanded linear velocities vx, vy are already expressed in the world frame (simplified).
-        - Yaw rate is small between updates so simple integration is acceptable.
-        - If both GPS and odom1 measurements are available, we fuse GPS first (more accurate positions),
-          then refine with odom1 (adds yaw info and high-rate positional correction).
-        """
-        dt = self.dt
+        dt = self.dt # time step for integration
+
         # --- Prediction ---
         # State transition x_k+1 = x_k + dt * [vx, vy, yaw_rate]
         u = np.array([[self.vx], [self.vy], [self.yaw_rate]])
@@ -97,7 +90,7 @@ class SimpleKalmanFilterNode:
 
         # 1) GPS correction (measures x,y)
         if self.gps is not None:
-            H_gps = np.array([[1,0,0],[0,1,0]])  # maps state to measurement space
+            H_gps = np.array([[1,0,0],[0,1,0]])  # map state to measurement space
             z = self.gps  # shape (2,1)
             y = z - H_gps @ x_upd                  # innovation
             S = H_gps @ P_upd @ H_gps.T + self.R_gps
@@ -109,7 +102,7 @@ class SimpleKalmanFilterNode:
         if self.odom1 is not None:
             H_o = np.eye(3)
             z = self.odom1
-            # Normalize yaw innovation to avoid discontinuities
+            # Normalize yaw innovation 
             y = z - H_o @ x_upd
             y[2,0] = self._normalize_angle(y[2,0])
             S = H_o @ P_upd @ H_o.T + self.R_odom1
