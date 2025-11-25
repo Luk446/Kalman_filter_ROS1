@@ -1,10 +1,9 @@
-import rosbag
 import csv
+import os
+import rosbag
 from typing import Any, Dict
 
 bagfile = "kf_test.bag"
-
-bag = rosbag.Bag(bagfile)
 
 topics = [
     '/kalman_estimate',
@@ -48,22 +47,51 @@ def ros_msg_to_dict(msg: Any, prefix: str = "") -> Dict[str, Any]:
         flat[prefix.rstrip('_') or 'value'] = msg
     return flat
 
-for topic in topics:
+
+def export_topic(topic: str) -> int:
+    """Export a single topic to CSV. Returns number of rows written."""
     csvname = topic.strip('/').replace('/', '_') + ".csv"
-    with open(csvname, 'w') as csvfile:
-        writer = None
+    rows_written = 0
+    csvfile = None
+    writer = None
 
-        for _, msg, t in bag.read_messages(topics=[topic]):
-            flat = ros_msg_to_dict(msg)
+    try:
+        with rosbag.Bag(bagfile, 'r') as bag:
+            for _, msg, t in bag.read_messages(topics=[topic]):
+                flat = ros_msg_to_dict(msg)
 
-            # Initialize writer with stable, sorted header for reproducibility
-            if writer is None:
-                header = ['time'] + sorted(flat.keys())
-                writer = csv.DictWriter(csvfile, fieldnames=header)
-                writer.writeheader()
+                if writer is None:
+                    csvfile = open(csvname, 'w', newline='')
+                    header = ['time'] + sorted(flat.keys())
+                    writer = csv.DictWriter(
+                        csvfile,
+                        fieldnames=header,
+                        extrasaction='ignore'
+                    )
+                    writer.writeheader()
 
-            row = {'time': t.to_sec()}
-            row.update(flat)
-            writer.writerow(row)
+                row = {'time': t.to_sec()}
+                row.update(flat)
+                writer.writerow(row)
+                rows_written += 1
+    finally:
+        if csvfile is not None:
+            csvfile.close()
 
-bag.close()
+    if rows_written == 0:
+        if os.path.exists(csvname):
+            os.remove(csvname)
+        print(f"[WARN] Topic {topic} had no messages in {bagfile}; CSV skipped.")
+    else:
+        print(f"[INFO] Wrote {rows_written} rows to {csvname} from {topic}.")
+
+    return rows_written
+
+
+def main() -> None:
+    for topic in topics:
+        export_topic(topic)
+
+
+if __name__ == "__main__":
+    main()

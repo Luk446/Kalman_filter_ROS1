@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import rospy
 import numpy as np
+from math import sin, cos, atan2, pi
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist
+from sensor_msgs.msg import Imu
 from tf.transformations import quaternion_from_euler, euler_from_quaternion
 
 class SimpleKalmanFilterNode:
@@ -15,7 +17,8 @@ class SimpleKalmanFilterNode:
         # Subscribers
         rospy.Subscriber('/cmd_vel', Twist, self.cmd_vel_callback)
         rospy.Subscriber('/fake_gps', Odometry, self.gps_callback)      
-        rospy.Subscriber('/odom1', Odometry, self.odom1_callback)       
+        rospy.Subscriber('/odom1', Odometry, self.odom1_callback)
+        rospy.Subscriber('/imu', Imu, self.imu_callback)
 
         # Publisher 
         self.pub = rospy.Publisher('/kalman_estimate', Odometry, queue_size=10)
@@ -24,18 +27,28 @@ class SimpleKalmanFilterNode:
         self.x = np.zeros((3,1))
         self.P = np.eye(3) * 0.5  # more uncertain
 
+        # initial imu state
+        self.imu_yaw = None
+        self.imu_yaw_rate = None
+
         # Noise 
+
+        # set noise for imu
+        self.R_imu_yaw = np.array([[ (1.0*pi/180.0)**2 ]])   # 1° std dev
+        self.R_imu_rate = np.array([[ (0.02)**2 ]])          # 0.02 rad/s std dev
+
         # Process noise, vels and yaw
-        self.Q = np.diag([0.05**2, 0.05**2, (2.0*np.pi/180.0)**2])  # ~5cm std, ~2deg std
+        self.Q = np.diag([0.05**2, 0.05**2, (2.0*pi/180.0)**2])  # ~5cm std, ~2deg std
         # gps noise
         self.R_gps = np.diag([0.02**2, 0.02**2])  # 2cm std
         # Noisy odom measurement noise (x,y,yaw)
-        self.R_odom1 = np.diag([0.20**2, 0.20**2, (5.0*np.pi/180.0)**2])  # 20cm std, 5deg std
+        self.R_odom1 = np.diag([0.20**2, 0.20**2, (5.0*pi/180.0)**2])  # 20cm std, 5deg std
 
         # Latest command velocities
         self.vx = 0.0
         self.vy = 0.0
         self.yaw_rate = 0.0
+        self.yaw_rate_input = 0.0  # what the filter actually integrates
 
         # Latest measurements
         self.gps = None            
@@ -65,17 +78,27 @@ class SimpleKalmanFilterNode:
         yaw = euler_from_quaternion([q.x, q.y, q.z, q.w])[2]
         self.odom1 = np.array([[pos_x], [pos_y], [yaw]])
 
+    def imu_callback(self, msg):
+        quat = [msg.orientation.x, msg.orientation.y,
+                msg.orientation.z, msg.orientation.w]
+        self.imu_yaw = euler_from_quaternion(quat)[2]
+        self.imu_yaw_rate = msg.angular_velocity.z    
+
     @staticmethod
     def _normalize_angle(angle):
-        return np.arctan2(np.sin(angle), np.cos(angle))
+        return atan2(sin(angle), cos(angle))
 
     def update_kalman(self, event):
 
         dt = self.dt # time step for integration
 
         # --- Prediction ---
+        # Prefer IMU yaw rate if available, otherwise fall back to cmd_vel
+        yaw_rate_input = self.imu_yaw_rate if self.imu_yaw_rate is not None else self.yaw_rate
+        self.yaw_rate_input = yaw_rate_input
+
         # State transition x_k+1 = x_k + dt * [vx, vy, yaw_rate]
-        u = np.array([[self.vx], [self.vy], [self.yaw_rate]])
+        u = np.array([[self.vx], [self.vy], [yaw_rate_input]])
         F = np.eye(3)
         B = dt * np.eye(3)
         x_pred = F @ self.x + B @ u
@@ -110,6 +133,18 @@ class SimpleKalmanFilterNode:
             x_upd = x_upd + K @ y
             P_upd = (np.eye(3) - K @ H_o) @ P_upd
 
+        # 3) IMU yaw correction (measures yaw only)
+        if self.imu_yaw is not None:
+            H_imu = np.array([[0.0, 0.0, 1.0]])
+            z = np.array([[self.imu_yaw]])
+            y = z - H_imu @ x_upd
+            y[0,0] = self._normalize_angle(y[0,0])
+            S = H_imu @ P_upd @ H_imu.T + self.R_imu_yaw
+            K = P_upd @ H_imu.T @ np.linalg.inv(S)
+            x_upd = x_upd + K @ y
+            P_upd = (np.eye(3) - K @ H_imu) @ P_upd
+
+
         # Final state
         x_upd[2,0] = self._normalize_angle(x_upd[2,0])
         self.x = x_upd
@@ -134,7 +169,7 @@ class SimpleKalmanFilterNode:
 
         msg.twist.twist.linear.x = float(self.vx)
         msg.twist.twist.linear.y = float(self.vy)
-        msg.twist.twist.angular.z = float(self.yaw_rate)
+        msg.twist.twist.angular.z = float(self.yaw_rate_input)
 
         self.pub.publish(msg)
 
