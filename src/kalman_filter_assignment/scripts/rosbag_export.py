@@ -10,7 +10,8 @@ topics = [
     '/odom',
     '/fake_gps',
     '/odom1',
-    '/cmd_vel'
+    '/cmd_vel',
+    '/imu',
 ]
 
 def ros_msg_to_dict(msg: Any, prefix: str = "") -> Dict[str, Any]:
@@ -57,7 +58,7 @@ def export_topic(topic: str) -> int:
 
     try:
         with rosbag.Bag(bagfile, 'r') as bag:
-            for _, msg, t in bag.read_messages(topics=[topic]):
+            for _, msg, t in bag.read_messages(topics=[topic]):  # type: ignore[assignment]
                 flat = ros_msg_to_dict(msg)
 
                 if writer is None:

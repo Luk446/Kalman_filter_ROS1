@@ -17,6 +17,7 @@ CSV_FILES: Dict[str, str] = {
 	"kalman_estimate": "kalman_estimate.csv",
 	"odom": "odom.csv",
 	"odom1": "odom1.csv",
+	"imu": "imu.csv",
 }
 
 XY_COLUMNS: Iterable[Tuple[str, str]] = (
@@ -26,11 +27,25 @@ XY_COLUMNS: Iterable[Tuple[str, str]] = (
 	("x", "y"),
 )
 
-QUAT_COLUMNS = (
-	"pose_pose_orientation_x",
-	"pose_pose_orientation_y",
-	"pose_pose_orientation_z",
-	"pose_pose_orientation_w",
+QUAT_COLUMN_SETS = (
+	(
+		"pose_pose_orientation_x",
+		"pose_pose_orientation_y",
+		"pose_pose_orientation_z",
+		"pose_pose_orientation_w",
+	),
+	(
+		"pose_orientation_x",
+		"pose_orientation_y",
+		"pose_orientation_z",
+		"pose_orientation_w",
+	),
+	(
+		"orientation_x",
+		"orientation_y",
+		"orientation_z",
+		"orientation_w",
+	),
 )
 
 
@@ -55,14 +70,16 @@ def extract_xy(df: Optional[pd.DataFrame]) -> Optional[Tuple[np.ndarray, np.ndar
 	return None
 
 
+
 def extract_yaw(df: Optional[pd.DataFrame]) -> Optional[np.ndarray]:
 	if df is None:
 		return None
-	if all(col in df.columns for col in QUAT_COLUMNS):
-		qx, qy, qz, qw = (df[col].to_numpy() for col in QUAT_COLUMNS)
-		numerator = 2.0 * (qw * qz + qx * qy)
-		denominator = 1.0 - 2.0 * ((qy * qy) + (qz * qz))
-		return np.arctan2(numerator, denominator)  # type: ignore[attr-defined]
+	for quat_columns in QUAT_COLUMN_SETS:
+		if all(col in df.columns for col in quat_columns):
+			qx, qy, qz, qw = (df[col].to_numpy() for col in quat_columns)
+			numerator = 2.0 * (qw * qz + qx * qy)
+			denominator = 1.0 - 2.0 * ((qy * qy) + (qz * qz))
+			return np.arctan2(numerator, denominator)  # type: ignore[attr-defined]
 	for key in ("yaw", "pose_yaw", "theta"):
 		if key in df.columns:
 			return df[key].to_numpy()
@@ -120,6 +137,13 @@ def plot_data(datasets: Dict[str, Optional[pd.DataFrame]]) -> None:
 		datasets.get("odom1"),
 		"odom1_yaw",
 		"r",
+		extract_yaw,
+	)
+	plot_series(
+		ax_yaw,
+		datasets.get("imu"),
+		"imu_yaw",
+		"g",
 		extract_yaw,
 	)
 	ax_yaw.set_title("Yaw vs Time")
