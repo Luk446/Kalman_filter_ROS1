@@ -2,7 +2,7 @@
 
 - integrate IMU data with your system
 - tune EKF filter
-- provide a systematic analysis of the resulting localisation error -- should include localisayion performances with different combinations of sensors (odometry only, odom+gps, odom+gps+imu)
+- provide a systematic analysis of the resulting localisation error -- should include localisayion performances with different combinations of sensors (odometry only, odom+gps, gps+imu odom+gps+imu)
 
 # rosbag record command
 

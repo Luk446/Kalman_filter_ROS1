@@ -147,27 +147,27 @@ class SimpleKalmanFilterNode:
             x_upd = x_upd + K @ y
             P_upd = (np.eye(3) - K @ H_gps) @ P_upd
 
-        # 2) Noisy odom correction (measures x,y,yaw)
-        if self.odom1 is not None:
-            H_o = np.eye(3) # full state
-            z = self.odom1
-            y = z - H_o @ x_upd # measure - estimate
-            y[2,0] = self._normalize_angle(y[2,0]) # do normalisation
-            S = H_o @ P_upd @ H_o.T + self.R_odom1
-            K = P_upd @ H_o.T @ np.linalg.inv(S)
-            x_upd = x_upd + K @ y
-            P_upd = (np.eye(3) - K @ H_o) @ P_upd
-
-        # # 3) IMU yaw correction (measures yaw only) - superceeding odom yaw
-        # if self.imu_yaw is not None:
-        #     H_imu = np.array([[0.0, 0.0, 1.0]])
-        #     z = np.array([[self.imu_yaw]])
-        #     y = z - H_imu @ x_upd
-        #     y[0,0] = self._normalize_angle(y[0,0])
-        #     S = H_imu @ P_upd @ H_imu.T + self.R_imu_yaw
-        #     K = P_upd @ H_imu.T @ np.linalg.inv(S)
+        # # 2) Noisy odom correction (measures x,y,yaw)
+        # if self.odom1 is not None:
+        #     H_o = np.eye(3) # full state
+        #     z = self.odom1
+        #     y = z - H_o @ x_upd # measure - estimate
+        #     y[2,0] = self._normalize_angle(y[2,0]) # do normalisation
+        #     S = H_o @ P_upd @ H_o.T + self.R_odom1
+        #     K = P_upd @ H_o.T @ np.linalg.inv(S)
         #     x_upd = x_upd + K @ y
-        #     P_upd = (np.eye(3) - K @ H_imu) @ P_upd
+        #     P_upd = (np.eye(3) - K @ H_o) @ P_upd
+
+        # 3) IMU yaw correction (measures yaw only) - superceeding odom yaw
+        if self.imu_yaw is not None:
+            H_imu = np.array([[0.0, 0.0, 1.0]])
+            z = np.array([[self.imu_yaw]])
+            y = z - H_imu @ x_upd
+            y[0,0] = self._normalize_angle(y[0,0])
+            S = H_imu @ P_upd @ H_imu.T + self.R_imu_yaw
+            K = P_upd @ H_imu.T @ np.linalg.inv(S)
+            x_upd = x_upd + K @ y
+            P_upd = (np.eye(3) - K @ H_imu) @ P_upd
 
 
         # Final state
