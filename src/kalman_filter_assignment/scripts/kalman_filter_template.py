@@ -51,7 +51,7 @@ class SimpleKalmanFilterNode:
         # gps noise
         self.R_gps = np.diag([R_GPS**2, R_GPS**2])  # 2cm x,y
         # Noisy odom measurement noise (x,y,yaw)
-        self.R_odom1 = np.diag([ODOM_XY**2, 0.20**2, (ODOM_YAW*pi/180.0)**2])  # +/- 20cm  , 5 deg yaw
+        self.R_odom1 = np.diag([ODOM_XY**2, ODOM_XY**2, (ODOM_YAW*pi/180.0)**2])  # +/- cm  , deg yaw
 
         # Latest command velocities / inputs
         self.vx = 0.0
@@ -100,7 +100,7 @@ class SimpleKalmanFilterNode:
     # method for keeping yaw between (-n,n)
     @staticmethod
     def _normalize_angle(angle):
-        return atan2(sin(angle), cos(angle))
+        return atan2(sin(angle), cos(angle)) # reduce to -pi to pi
     
     # ----------------- periodic filtering -----------------------
 
@@ -121,7 +121,7 @@ class SimpleKalmanFilterNode:
         x_pred = F @ self.x + B @ u # (x+dt*u) = Fx+Bu in matric form 
         x_pred[2,0] = self._normalize_angle(x_pred[2,0]) # normalise
 
-        # add the noise at each step : P' = F P F^T + Q
+        # add the noise at each step : P' = F P F^T + Q (@ = matrix mult)
         P_pred = F @ self.P @ F.T + self.Q
 
         # update measurements
@@ -147,16 +147,16 @@ class SimpleKalmanFilterNode:
             x_upd = x_upd + K @ y
             P_upd = (np.eye(3) - K @ H_gps) @ P_upd
 
-        # # 2) Noisy odom correction (measures x,y,yaw)
-        # if self.odom1 is not None:
-        #     H_o = np.eye(3) # full state
-        #     z = self.odom1
-        #     y = z - H_o @ x_upd # measure - estimate
-        #     y[2,0] = self._normalize_angle(y[2,0]) # do normalisation
-        #     S = H_o @ P_upd @ H_o.T + self.R_odom1
-        #     K = P_upd @ H_o.T @ np.linalg.inv(S)
-        #     x_upd = x_upd + K @ y
-        #     P_upd = (np.eye(3) - K @ H_o) @ P_upd
+        # 2) Noisy odom correction (measures x,y,yaw)
+        if self.odom1 is not None:
+            H_o = np.eye(3) # full state
+            z = self.odom1
+            y = z - H_o @ x_upd # measure - estimate
+            y[2,0] = self._normalize_angle(y[2,0]) # do normalisation
+            S = H_o @ P_upd @ H_o.T + self.R_odom1
+            K = P_upd @ H_o.T @ np.linalg.inv(S)
+            x_upd = x_upd + K @ y
+            P_upd = (np.eye(3) - K @ H_o) @ P_upd
 
         # 3) IMU yaw correction (measures yaw only) - superceeding odom yaw
         if self.imu_yaw is not None:
