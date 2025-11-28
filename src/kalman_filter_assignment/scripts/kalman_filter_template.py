@@ -133,6 +133,8 @@ class SimpleKalmanFilterNode:
         # for every sensor do kalman correction
         
         # H - measurement matrix
+        # z,y - measurement, innovation
+        # S - innovation covariance
         # Y - innovation calculation (delta)
         # K - kalman gain - weight of innov
         # update the state and covariance
