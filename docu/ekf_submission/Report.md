@@ -18,7 +18,7 @@ roslaunch rosbot_bring fake_gps_random.launch
 
 And the package containing the filter is ran with
 ```bash
-roslaunch kalman_filter_assignment kalman_execution.launch student_name:LukeEdgecombe
+roslaunch kalman_filter_assignment kalman_execution.launch student_name:=LukeEdgecombe
 ```
 
 The behaviour is observed with 

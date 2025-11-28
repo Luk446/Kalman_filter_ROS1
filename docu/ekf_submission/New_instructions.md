@@ -4,6 +4,15 @@
 - tune EKF filter
 - provide a systematic analysis of the resulting localisation error -- should include localisayion performances with different combinations of sensors (odometry only, odom+gps, gps+imu odom+gps+imu)
 
+- have to have prediction and correction 1 we use odom for pos and gps for observation 2 we use 
+- when update klaman we only do pred with odom + imu
+- when we recieve gps we do the other part ( correction step ) 
+- compute kalman gain only when we recieve the observation
+
+- plot squared error with the euclidian distance (sq = eud )
+
+- only when gps comes we do the prediction
+
 # rosbag record command
 
 ""
