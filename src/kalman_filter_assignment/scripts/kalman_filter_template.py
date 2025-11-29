@@ -3,24 +3,38 @@ import rospy
 import numpy as np
 from math import sin, cos, atan2, pi
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Imu
 from tf.transformations import quaternion_from_euler, euler_from_quaternion
 
-from kalman_tuning_params import Q_DRIFT,Q_YAW,IC,IMU_RATE,IMU_YAW,R_GPS,ODOM_XY,ODOM_YAW
+from kalman_tuning_params import Q_DRIFT, Q_YAW, IC, R_GPS, ODOM_XY, ODOM_YAW
 
 class SimpleKalmanFilterNode:
+    """
+    Extended Kalman Filter (EKF) for robot localization.
+    
+    State: [x, y, yaw]^T  (position in world frame, heading)
+    
+    Motion model (non-linear):
+        x'   = x + (vx*cos(yaw) - vy*sin(yaw)) * dt
+        y'   = y + (vx*sin(yaw) + vy*cos(yaw)) * dt
+        yaw' = yaw + omega * dt
+    
+    where vx, vy are body-frame velocities from odometry,
+    and omega is yaw rate from IMU.
+    
+    Architecture:
+        - Prediction runs at odom rate (~10Hz) for smooth estimates
+        - GPS correction runs when GPS arrives (~1Hz)
+    """
 
     def __init__(self):
 
         rospy.init_node('kalman_filter_simple', anonymous=True)
 
         # param
-        self.dt = rospy.get_param('~dt', 0.1)  # Time step
-
+        self.dt = rospy.get_param('~dt', 0.1)  # Default time step
 
         # Subscribers
-        rospy.Subscriber('/cmd_vel', Twist, self.cmd_vel_callback)
         rospy.Subscriber('/fake_gps', Odometry, self.gps_callback)      
         rospy.Subscriber('/odom1', Odometry, self.odom1_callback)
         rospy.Subscriber('/imu', Imu, self.imu_callback)
@@ -32,63 +46,67 @@ class SimpleKalmanFilterNode:
 
         # Initial State: [x, y, yaw]
         self.x = np.zeros((3,1))
-        self.P = np.eye(3) * IC  # covariance starts at 0.5*I
+        self.P = np.eye(3) * IC  # Initial covariance
 
-        # initial imu state
+        # IMU state
         self.imu_yaw = None
         self.imu_yaw_rate = None
 
         # ----------------- noise models -----------------------
 
-        # noise for imu
-        self.R_imu_yaw = np.array([[ (IMU_YAW*pi/180.0)**2 ]])   # 1° std dev in rad
-        self.R_imu_rate = np.array([[ (IMU_RATE)**2 ]])          # 0.02 rad/s std dev
-
-        # process the noise matrix
-        self.Q = np.diag([Q_DRIFT**2,Q_DRIFT**2, # 5cm drift x,y
-                          (Q_YAW*pi/180.0)**2])  # - +/- 2 deg in yaw per time ste
+        # Process noise standard deviations (will be scaled by dt)
+        self.sigma_xy = Q_DRIFT      # Position drift std dev (m/sqrt(s))
+        self.sigma_yaw = Q_YAW * pi / 180.0  # Yaw drift std dev (rad/sqrt(s))
         
-        # gps noise
-        self.R_gps = np.diag([R_GPS**2, R_GPS**2])  # 2cm x,y
-        # Noisy odom measurement noise (x,y,yaw)
-        self.R_odom1 = np.diag([ODOM_XY**2, ODOM_XY**2, (ODOM_YAW*pi/180.0)**2])  # +/- cm  , deg yaw
+        # GPS measurement noise covariance
+        self.R_gps = np.diag([R_GPS**2, R_GPS**2])
+        
+        # Noisy odom measurement noise (for potential odom updates)
+        self.R_odom1 = np.diag([ODOM_XY**2, ODOM_XY**2, (ODOM_YAW*pi/180.0)**2])
 
-        # Latest command velocities / inputs
-        self.vx = 0.0
-        self.vy = 0.0
-        self.yaw_rate = 0.0
-        self.yaw_rate_input = 0.0  # what the filter actually integrates
+        # Latest motion information (body frame velocities)
+        self.vx = 0.0       # body-frame forward velocity
+        self.vy = 0.0       # body-frame lateral velocity  
+        self.yaw_rate = 0.0 # yaw rate from IMU
+        
+        # Odometry velocities (body frame)
+        self.odom_vx = None
+        self.odom_vy = None
 
         # Latest measurements
-        self.gps = None            
+        self.gps = None            # Stored GPS measurement for correction
         self.odom1 = None          
+        self.last_prediction_time = None
+        self.initialized = False   # Track if filter has been initialized
 
-        # Timer for Kalman update
-        rospy.Timer(rospy.Duration.from_sec(self.dt), self.update_kalman)
-
-        rospy.loginfo("Kalman Filter start")
+        rospy.loginfo("Extended Kalman Filter (EKF) initialized")
 
 
     # ----------------- storage callbacks -----------------------
 
-    # copy x,y,z(angular)
-    def cmd_vel_callback(self, msg):        
-        self.vx = msg.linear.x
-        self.vy = msg.linear.y
-        self.yaw_rate = msg.angular.z
-
-    # latest GPS (x,y) as 2x1
+    # latest GPS (x,y) as 2x1 - triggers correction step
     def gps_callback(self, msg):
         self.gps = np.array([[msg.pose.pose.position.x],
                               [msg.pose.pose.position.y]])
+        # GPS correction will be applied on next odom callback
 
-    # noisy odom  (x,y,yaw)
+    # noisy odom  (x,y,yaw) - triggers prediction step
     def odom1_callback(self, msg):
         pos_x = msg.pose.pose.position.x
         pos_y = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
         yaw = euler_from_quaternion([q.x, q.y, q.z, q.w])[2] # conv from quat
         self.odom1 = np.array([[pos_x], [pos_y], [yaw]])     # store as 3x1
+        self.odom_vx = msg.twist.twist.linear.x
+        self.odom_vy = msg.twist.twist.linear.y
+        
+        # Get timestamp for prediction
+        stamp = msg.header.stamp.to_sec()
+        if stamp == 0.0:
+            stamp = rospy.Time.now().to_sec()
+        
+        # Run prediction at odom rate (10Hz)
+        self.run_prediction_and_update(stamp)
 
     # imu 
     def imu_callback(self, msg):
@@ -102,79 +120,134 @@ class SimpleKalmanFilterNode:
     def _normalize_angle(angle):
         return atan2(sin(angle), cos(angle)) # reduce to -pi to pi
     
+    # ----------------- EKF Motion Model -----------------------
+
+    def predict_state(self, x, vx, vy, omega, dt):
+        """
+        Non-linear motion model: transform body-frame velocities to world frame.
+        
+        x_new = x + (vx*cos(yaw) - vy*sin(yaw)) * dt
+        y_new = y + (vx*sin(yaw) + vy*cos(yaw)) * dt
+        yaw_new = yaw + omega * dt
+        """
+        yaw = x[2, 0]
+        c_yaw = cos(yaw)
+        s_yaw = sin(yaw)
+        
+        x_new = np.zeros((3, 1))
+        x_new[0, 0] = x[0, 0] + (vx * c_yaw - vy * s_yaw) * dt
+        x_new[1, 0] = x[1, 0] + (vx * s_yaw + vy * c_yaw) * dt
+        x_new[2, 0] = x[2, 0] + omega * dt
+        
+        return x_new
+
+    def compute_jacobian_F(self, x, vx, vy, dt):
+        """
+        Compute the Jacobian of the motion model w.r.t. state.
+        
+        F = d(f(x,u))/dx = [[1, 0, (-vx*sin(yaw) - vy*cos(yaw))*dt],
+                           [0, 1, (vx*cos(yaw) - vy*sin(yaw))*dt],
+                           [0, 0, 1]]
+        """
+        yaw = x[2, 0]
+        c_yaw = cos(yaw)
+        s_yaw = sin(yaw)
+        
+        F = np.eye(3)
+        F[0, 2] = (-vx * s_yaw - vy * c_yaw) * dt
+        F[1, 2] = (vx * c_yaw - vy * s_yaw) * dt
+        
+        return F
+
+    def compute_process_noise(self, dt):
+        """
+        Compute process noise covariance scaled by dt.
+        Process noise increases with time step.
+        """
+        Q = np.diag([
+            (self.sigma_xy * dt)**2,      # x position noise
+            (self.sigma_xy * dt)**2,      # y position noise
+            (self.sigma_yaw * dt)**2      # yaw noise
+        ])
+        return Q
+    
     # ----------------- periodic filtering -----------------------
 
-    def update_kalman(self, event):
+    def run_prediction_and_update(self, measurement_time):
+        """Run EKF prediction at odom rate, apply GPS correction when available."""
+        if self.odom_vx is None or self.odom_vy is None or self.imu_yaw_rate is None:
+            # Can't predict without motion + yaw rate information
+            self.last_prediction_time = measurement_time
+            return
 
-        dt = self.dt # time step for integration
+        if self.last_prediction_time is None:
+            self.last_prediction_time = measurement_time
+            return
 
-        # use imu for the rate (if not use cmd_vel)
-        yaw_rate_input = self.imu_yaw_rate if self.imu_yaw_rate is not None else self.yaw_rate
-        self.yaw_rate_input = yaw_rate_input
+        dt = measurement_time - self.last_prediction_time
+        if dt <= 0.0:
+            dt = self.dt
+        self.last_prediction_time = measurement_time
 
-        # 3x1 for latest vels
-        u = np.array([[self.vx], [self.vy], [yaw_rate_input]])
+        # Get current control inputs
+        vx = self.odom_vx
+        vy = self.odom_vy
+        omega = self.imu_yaw_rate
 
-        # state transition
-        F = np.eye(3) # assume no internal dynamics
-        B = dt * np.eye(3) # conv vel into pose delta
-        x_pred = F @ self.x + B @ u # (x+dt*u) = Fx+Bu in matric form 
-        x_pred[2,0] = self._normalize_angle(x_pred[2,0]) # normalise
-
-        # add the noise at each step : P' = F P F^T + Q (@ = matrix mult)
-        P_pred = F @ self.P @ F.T + self.Q
-
-        # update measurements
-        x_upd = x_pred
-        P_upd = P_pred
-
-        # ----------------- measurement modelling -----------------------
-
-        # for every sensor do kalman correction
+        # ---------- EKF Prediction Step ----------
+        # Non-linear state prediction
+        x_pred = self.predict_state(self.x, vx, vy, omega, dt)
+        x_pred[2, 0] = self._normalize_angle(x_pred[2, 0])
         
-        # H - measurement matrix
-        # z,y - measurement, innovation
-        # S - innovation covariance
-        # Y - innovation calculation (delta)
-        # K - kalman gain - weight of innov
-        # update the state and covariance
+        # Compute Jacobian for covariance propagation
+        F = self.compute_jacobian_F(self.x, vx, vy, dt)
+        
+        # Process noise scaled by dt
+        Q = self.compute_process_noise(dt)
+        
+        # Propagate covariance
+        P_pred = F @ self.P @ F.T + Q
 
-        # 1) GPS correction  (x,y) - no yaw
+        # Store motion state used for publishing diagnostics
+        self.vx = float(vx)
+        self.vy = float(vy)
+        self.yaw_rate = float(omega)
+
+        # ---------- EKF Update Step (GPS correction when available) ----------
         if self.gps is not None:
-            H_gps = np.array([[1,0,0],[0,1,0]]) # just xy
-            z = self.gps 
-            y = z - H_gps @ x_upd 
-            S = H_gps @ P_upd @ H_gps.T + self.R_gps  # combine covariance with gps noise
-            K = P_upd @ H_gps.T @ np.linalg.inv(S)
-            x_upd = x_upd + K @ y
-            P_upd = (np.eye(3) - K @ H_gps) @ P_upd
+            # GPS measures x, y position directly
+            H_gps = np.array([[1, 0, 0],
+                              [0, 1, 0]])
+            z = self.gps
+            
+            # Innovation (measurement residual)
+            y = z - H_gps @ x_pred
+            
+            # Innovation covariance
+            S = H_gps @ P_pred @ H_gps.T + self.R_gps
+            
+            # Kalman gain
+            K = P_pred @ H_gps.T @ np.linalg.inv(S)
+            
+            # State update
+            x_upd = x_pred + K @ y
+            
+            # Covariance update (Joseph form for numerical stability)
+            I_KH = np.eye(3) - K @ H_gps
+            P_upd = I_KH @ P_pred @ I_KH.T + K @ self.R_gps @ K.T
+            
+            # Clear GPS after use
+            self.gps = None
+        else:
+            # No GPS, just use prediction
+            x_upd = x_pred
+            P_upd = P_pred
 
-        # 2) Noisy odom correction (measures x,y,yaw)
-        if self.odom1 is not None:
-            H_o = np.eye(3) # full state
-            z = self.odom1
-            y = z - H_o @ x_upd # measure - estimate
-            y[2,0] = self._normalize_angle(y[2,0]) # do normalisation
-            S = H_o @ P_upd @ H_o.T + self.R_odom1
-            K = P_upd @ H_o.T @ np.linalg.inv(S)
-            x_upd = x_upd + K @ y
-            P_upd = (np.eye(3) - K @ H_o) @ P_upd
-
-        # 3) IMU yaw correction (measures yaw only) - superceeding odom yaw
-        if self.imu_yaw is not None:
-            H_imu = np.array([[0.0, 0.0, 1.0]])
-            z = np.array([[self.imu_yaw]])
-            y = z - H_imu @ x_upd
-            y[0,0] = self._normalize_angle(y[0,0])
-            S = H_imu @ P_upd @ H_imu.T + self.R_imu_yaw
-            K = P_upd @ H_imu.T @ np.linalg.inv(S)
-            x_upd = x_upd + K @ y
-            P_upd = (np.eye(3) - K @ H_imu) @ P_upd
-
-
-        # Final state
-        x_upd[2,0] = self._normalize_angle(x_upd[2,0]) # normalise again just in case
-        self.x = x_upd 
+        # Normalize yaw angle
+        x_upd[2, 0] = self._normalize_angle(x_upd[2, 0])
+        
+        # Update state
+        self.x = x_upd
         self.P = P_upd
 
         self.publish_estimate()
@@ -196,7 +269,7 @@ class SimpleKalmanFilterNode:
 
         msg.twist.twist.linear.x = float(self.vx)
         msg.twist.twist.linear.y = float(self.vy)
-        msg.twist.twist.angular.z = float(self.yaw_rate_input)
+        msg.twist.twist.angular.z = float(self.yaw_rate)
 
         self.pub.publish(msg)
 

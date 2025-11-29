@@ -70,7 +70,6 @@ def extract_xy(df: Optional[pd.DataFrame]) -> Optional[Tuple[np.ndarray, np.ndar
 	return None
 
 
-
 def extract_yaw(df: Optional[pd.DataFrame]) -> Optional[np.ndarray]:
 	if df is None:
 		return None
@@ -84,6 +83,46 @@ def extract_yaw(df: Optional[pd.DataFrame]) -> Optional[np.ndarray]:
 		if key in df.columns:
 			return df[key].to_numpy()
 	return None
+
+
+def interpolate_xy(df: Optional[pd.DataFrame], sample_times: np.ndarray) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+	if df is None or "time" not in df.columns:
+		return None
+	xy = extract_xy(df)
+	if xy is None:
+		return None
+	ref_times = df["time"].to_numpy()
+	if ref_times.size < 2:
+		return None
+	x_vals, y_vals = xy
+	interp_x = np.interp(sample_times, ref_times, x_vals)
+	interp_y = np.interp(sample_times, ref_times, y_vals)
+	return interp_x, interp_y
+
+
+def squared_position_error(
+	ref_df: Optional[pd.DataFrame],
+	target_df: Optional[pd.DataFrame],
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+	if (
+		ref_df is None
+		or target_df is None
+		or "time" not in target_df.columns
+		or "t_rel" not in target_df.columns
+	):
+		return None
+	target_xy = extract_xy(target_df)
+	if target_xy is None:
+		return None
+	interp = interpolate_xy(ref_df, target_df["time"].to_numpy())
+	if interp is None:
+		return None
+	x_ref, y_ref = interp
+	x_tar, y_tar = target_xy
+	diff_x = x_tar - x_ref
+	diff_y = y_tar - y_ref
+	squared_err = diff_x * diff_x + diff_y * diff_y
+	return target_df["t_rel"].to_numpy(), squared_err
 
 
 def plot_xy(ax, df, label, style="-"):
@@ -103,9 +142,17 @@ def plot_series(ax, df, label, color, extractor):
 	ax.plot(df["t_rel"], values, color=color, label=label)
 
 
+def plot_squared_error(ax, ref_df, df, label, color):
+	result = squared_position_error(ref_df, df)
+	if result is None:
+		return
+	times, errors = result
+	ax.plot(times, errors, color=color, label=label)
+
+
 def plot_data(datasets: Dict[str, Optional[pd.DataFrame]]) -> None:
 	fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-	ax_xy, ax_yaw = axes.flatten()
+	ax_xy, ax_err = axes.flatten()
 
 	plot_xy(ax_xy, datasets.get("odom"), "ground_truth", "k--")
 	plot_xy(ax_xy, datasets.get("odom1"), "odom1", "r:")
@@ -118,39 +165,13 @@ def plot_data(datasets: Dict[str, Optional[pd.DataFrame]]) -> None:
 	ax_xy.grid(True)
 	ax_xy.legend()
 
-	plot_series(
-		ax_yaw,
-		datasets.get("odom"),
-		"ground_truth_yaw",
-		"k",
-		extract_yaw,
-	)
-	plot_series(
-		ax_yaw,
-		datasets.get("kalman_estimate"),
-		"kalman_yaw",
-		"b",
-		extract_yaw,
-	)
-	plot_series(
-		ax_yaw,
-		datasets.get("odom1"),
-		"odom1_yaw",
-		"r",
-		extract_yaw,
-	)
-	plot_series(
-		ax_yaw,
-		datasets.get("imu"),
-		"imu_yaw",
-		"g",
-		extract_yaw,
-	)
-	ax_yaw.set_title("Yaw vs Time")
-	ax_yaw.set_xlabel("time [s]")
-	ax_yaw.set_ylabel("yaw [rad]")
-	ax_yaw.grid(True)
-	ax_yaw.legend()
+	ref = datasets.get("odom")
+	plot_squared_error(ax_err, ref, datasets.get("kalman_estimate"), "kalman vs ground truth", "b")
+	ax_err.set_title("Kalman squared position error")
+	ax_err.set_xlabel("time [s]")
+	ax_err.set_ylabel("error [m^2]")
+	ax_err.grid(True)
+	ax_err.legend()
 
 	fig.tight_layout()
 	plt.show()
