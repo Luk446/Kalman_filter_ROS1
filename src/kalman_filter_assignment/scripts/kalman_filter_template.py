@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from re import U
 import rospy
 import numpy as np
 from math import sin, cos, atan2, pi
@@ -6,7 +7,7 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
 from tf.transformations import quaternion_from_euler, euler_from_quaternion
 
-from kalman_tuning_params import Q_DRIFT, Q_YAW, IC, R_GPS, ODOM_XY, ODOM_YAW
+from kalman_tuning_params import Q_DRIFT, Q_YAW, IC, R_GPS, ODOM_XY, ODOM_YAW, USE_ODOM, USE_IMU, USE_GPS
 
 class SimpleKalmanFilterNode:
     """
@@ -31,13 +32,20 @@ class SimpleKalmanFilterNode:
 
         rospy.init_node('kalman_filter_simple', anonymous=True)
 
+        self.use_odom = rospy.get_param('~use_odom', True)  # Whether to use odom for prediction
+        self.use_imu = rospy.get_param('~use_imu', True)    # Whether to use IMU for yaw rate
+        self.use_gps = rospy.get_param('~use_gps', True)    # Whether to use GPS for correction
+
         # param
         self.dt = rospy.get_param('~dt', 0.1)  # Default time step
 
         # Subscribers
-        rospy.Subscriber('/fake_gps', Odometry, self.gps_callback)      
-        rospy.Subscriber('/odom1', Odometry, self.odom1_callback)
-        rospy.Subscriber('/imu', Imu, self.imu_callback)
+        if USE_GPS:
+            rospy.Subscriber('/fake_gps', Odometry, self.gps_callback)      
+        if USE_ODOM:
+            rospy.Subscriber('/odom1', Odometry, self.odom1_callback)
+        if USE_IMU:
+            rospy.Subscriber('/imu', Imu, self.imu_callback)
 
         # Publisher 
         self.pub = rospy.Publisher('/kalman_estimate', Odometry, queue_size=10)
@@ -190,11 +198,32 @@ class SimpleKalmanFilterNode:
         self.last_prediction_time = measurement_time
 
         # Get current control inputs
-        vx = self.odom_vx
-        vy = self.odom_vy
-        omega = self.imu_yaw_rate
+        if not self.use_odom:
+            self.odom_vx = 0.0
+            self.odom_vy = 0.0
+        
+        # if IMU not used, set yaw rate to zero
+        if not self.use_imu:
+            self.imu_yaw_rate = 0.0
+        
+        # 
+        if self.last_prediction_time is None:
+            self.last_prediction_time = measurement_time
+            return
+        
+        # use odom timestep
+        dt = measurement_time - self.last_prediction_time
+        if dt <= 0.0:
+            dt = self.dt
+        self.last_prediction_time = measurement_time
+
+        # motion inputs
+        vx = self.odom_vx if USE_ODOM is not None else 0.0
+        vy = self.odom_vy if USE_ODOM is not None else 0.0
+        omega = self.imu_yaw_rate if USE_IMU is not None else 0.0
 
         # ---------- EKF Prediction Step ----------
+
         # Non-linear state prediction
         x_pred = self.predict_state(self.x, vx, vy, omega, dt)
         x_pred[2, 0] = self._normalize_angle(x_pred[2, 0])
@@ -214,7 +243,7 @@ class SimpleKalmanFilterNode:
         self.yaw_rate = float(omega)
 
         # ---------- EKF Update Step (GPS correction when available) ----------
-        if self.gps is not None:
+        if USE_GPS and self.gps is not None:
             # GPS measures x, y position directly
             H_gps = np.array([[1, 0, 0],
                               [0, 1, 0]])
