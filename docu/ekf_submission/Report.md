@@ -10,6 +10,8 @@ table { font-size: 9pt; }
 
 # Extended Kalman Filter Report
 
+- the code has to major designs, second design occured in response to demonstration feedback
+
 Based off the original kalman filter submission that used gps+odometry data to do kalman prediction filtering
 
 To gain an understanding of the individual effects of each measurment, additionally, the filter was executed with varying combinations of the inputs.
@@ -36,67 +38,19 @@ To make things easier to tune a seperate python file was added to introduce a se
 - Q_DRIFT - xy drift in m/s (process noise for position)
 - Q_YAW - angle deviation in degree/s (process noise for yaw)
 
-- R_GPS - GPS position std dev in m (measurement noise)
-
 - ODOM_XY - xy drift in cm
 - ODOM_YAW - angle deviation in degrees
 
-### Initial state
-
-IC = 0.5
-IMU_YAW = 1.0
-IMU_RATE = 0.02
-Q_DRIFT = 0.05
-Q_YAW = 2.0
-R_GPS = 0.02
-ODOM_XY = 0.20
-ODOM_YAW = 5.0
-
-## Method 
-
-The config was verified visually by plotting the 2d motion of the robot along side the ground truth sensor.
-
-- After initial graph, close to ground truth but jagged
-- V2 lead to smoother prediction but with strong deviation from ground truth
-- V3 was erratic
-- V4 was a satisfactory result
-
-### Table of changes
-
-| Measurement | V1    | V2    | V3    | V4    |
-|-------------|-------|-------|-------|-------|
-| IC          | 0.5   | 0.5   | 0.5   | 0.5   |
-| IMU_YAW     | 1.0   | 2.0   | 2.0   | 2.0   |
-| IMU_RATE    | 0.02  | 0.02  | 0.02  | 0.02  |
-| Q_DRIFT     | 0.05  | 0.02  | 0.04  | 0.04  |
-| Q_YAW       | 2.0   | 1.0   | 1.5   | 1.5   |
-| R_GPS       | 0.02  | 0.05  | 0.03  | 0.03  |
-| ODOM_XY     | 0.20  | 0.30  | 0.30  | 0.35  |
-| ODOM_YAW    | 5.0   | 8.0   | 8.0   | 9.0   |
-
-
-### Graphs of changes
-
-<table>
-<tr>
-<td><strong>V1</strong><br><img src="v4_graphs.png" width="300"></td>
-<td><strong>V2</strong><br><img src="v5_graphs.png" width="300"></td>
-</tr>
-<tr>
-<td><strong>V3</strong><br><img src="v6_graphs.png" width="300"></td>
-<td><strong>V4</strong><br><img src="v6_graphs.png" width="300"></td>
-</tr>
-</table>
 
 ## Demonstration report
 
-- Feedback from the report lead to a redesign on the code completely
+- Feedback from the report lead to a redesign on the code completely. The gps was used in places where it should not of been and there was no proper division between predicition and correction
 
 ---
 
 ## Extended Kalman Filter Redesign
 
-Following demonstration feedback, the filter was completely redesigned to address fundamental architectural issues.
+Following demonstration feedback, the filter was completely redesigned to address fundamental architectural issues. Additionally after re-design, further issues were found.
 
 ### Key Issues Identified
 
@@ -124,7 +78,7 @@ The redesigned EKF now follows proper architecture:
 - **Joseph form** covariance update for numerical stability
 - **Process noise scaled by dt** for consistent behaviour across different time steps
 
-### New Tuning Process
+### Tuning Process
 
 The redesigned filter required re-tuning with different parameter interpretations:
 
@@ -163,7 +117,13 @@ The redesigned filter required re-tuning with different parameter interpretation
 
 "IC = 0.5, Q_DRIFT = 0.05 (m/s), Q_YAW = 2.0 (deg/s), R_GPS = 0.25 (m), ODOM_XY = 0.35, ODOM_YAW = 9.0"
 
-### Results
+## Results
 
 The redesigned EKF provides smooth trajectory estimation at 10Hz, gradual GPS corrections without abrupt jumps, proper sensor fusion of odometry velocities and IMU yaw rate, and accurate ground truth tracking with reduced overall error.
+
+## Further testing 
+
+To demonstrate the influence of each sensor, the behaviour of the filter is recorded with varfying config (odometry only, odom+gps, gps+imu odom+gps+imu).
+
+
 
