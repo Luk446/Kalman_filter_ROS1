@@ -19,4 +19,7 @@ R_GPS = 0.25        # GPS position std dev (m)
 ODOM_XY = 0.35
 ODOM_YAW = 9.0
 
-
+# sensor config
+USE_ODOM = True
+USE_IMU = True
+USE_GPS = True
