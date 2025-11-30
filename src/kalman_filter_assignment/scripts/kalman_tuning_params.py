@@ -20,6 +20,6 @@ ODOM_XY = 0.35
 ODOM_YAW = 9.0
 
 # sensor config
-USE_ODOM = True
+USE_ODOM = False
 USE_IMU = True
-USE_GPS = True
+USE_GPS = True 

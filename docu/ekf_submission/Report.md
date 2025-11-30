@@ -123,7 +123,18 @@ The redesigned EKF provides smooth trajectory estimation at 10Hz, gradual GPS co
 
 ## Further testing 
 
-To demonstrate the influence of each sensor, the behaviour of the filter is recorded with varfying config (odometry only, odom+gps, gps+imu odom+gps+imu).
+To demonstrate the influence of each sensor, the behaviour of the filter is recorded with varfying config - odom only, odom+gps, gps+imu.
+
+### Graphs of sensor configs
+
+the gps+imu combination did not work
+
+<table>
+<tr>
+<td><strong>VNodom</strong><br><img src="vnodom_graphs.png" width="300"></td>
+<td><strong>VNodomgps</strong><br><img src="vnodomgps_graphs.png" width="300"></td>
+</tr>
+
 
 
 
